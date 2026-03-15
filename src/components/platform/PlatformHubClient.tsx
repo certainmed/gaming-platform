@@ -392,7 +392,7 @@ export default function PlatformHubClient() {
           <p>Skill-based fishing loop with cloud saves and live leaderboard competition.</p>
           <div className={styles.cardActions}>
             <Link href="/fish" className={styles.btnPrimary}>
-              Launch Fisher
+              Launch Game
             </Link>
             <Link href="/leaderboard" className={styles.btnGhost}>
               Leaderboard
@@ -406,10 +406,10 @@ export default function PlatformHubClient() {
           <p>Prestige-focused farming progression with cloud sync and leaderboard tracking.</p>
           <div className={styles.cardActions}>
             <Link href="/farm" className={styles.btnPrimary}>
-              Launch Farmer
+              Launch Game
             </Link>
-            <Link href="/fish" className={styles.btnGhost}>
-              Open Fisher Instead
+            <Link href="/leaderboard" className={styles.btnGhost}>
+              Leaderboard
             </Link>
           </div>
         </article>
