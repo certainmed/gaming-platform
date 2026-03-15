@@ -91,6 +91,8 @@ If you are provisioning a fresh database for the platform side, run SQL files in
 3. `20260309_fix_username_underscore_validation.sql`
 4. `20260309_leaderboard_access_and_manual_refresh.sql`
 5. `20260313_add_fish_catalog_and_leaderboard_bigint_safety.sql`
+6. `20260315_leaderboards_include_zero_scores.sql`
+7. `20260315_virtual_farmer_schema_compatibility.sql`
 
 These migrations define the game save table, username/profile rules, leaderboard snapshots + refresh functions, and fish catalog data.
 

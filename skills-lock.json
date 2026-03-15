@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "typescript-pro": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "85f019724b8766a6814b5893af9299847d91ac40699c124b271e43465250e4fd"
+    }
+  }
+}

@@ -627,7 +627,10 @@
 
             if (shouldRequestManualRefresh) {
                 const refreshAttempt = await this._requestLeaderboardRefresh();
-                if (refreshAttempt.refreshed) {
+                const shouldRetryFetch = refreshAttempt.refreshed
+                    || (refreshAttempt.attempted && !refreshAttempt.error);
+
+                if (shouldRetryFetch) {
                     try {
                         const retry = await this._fetchLeaderboardRows();
                         if (!retry.error) {
