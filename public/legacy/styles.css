@@ -1477,6 +1477,62 @@ button:active:not(:disabled) {
     color: var(--text);
 }
 
+.rod-signal {
+    width: min(420px, 100%);
+    margin-top: 0.35rem;
+    padding: 0.56rem 0.68rem 0.62rem;
+    border-radius: 14px;
+    border: 1px solid var(--theme-card-border);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.48));
+    box-shadow: var(--shadow-sm);
+}
+
+.rod-signal-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.rod-signal-title,
+.rod-signal-detail {
+    margin: 0;
+}
+
+.rod-signal-title {
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--theme-card-muted);
+}
+
+.rod-signal-detail {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--text);
+}
+
+.rod-signal-track {
+    height: 0.56rem;
+    margin-top: 0.48rem;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.22);
+    overflow: hidden;
+}
+
+.rod-signal-fill {
+    height: 100%;
+    width: 0;
+    border-radius: inherit;
+    background: linear-gradient(145deg, #14b8a6, #0f766e);
+    transition: width 0.18s ease;
+}
+
+.rod-signal.active .rod-signal-fill {
+    background: linear-gradient(145deg, #f59e0b, #ea580c);
+}
+
 .timing-slot {
     width: min(560px, 100%);
     margin-top: 0.1rem;

@@ -455,6 +455,21 @@ class SaveSystem {
         }
         validated.pityCounter = Math.min(Math.floor(validated.pityCounter), 100);
 
+        if (typeof validated.rodState !== 'object' || validated.rodState === null || Array.isArray(validated.rodState)) {
+            validated.rodState = {};
+        }
+        validated.rodState = {
+            rodId: validRodIds.includes(validated.rodState.rodId) ? validated.rodState.rodId : validated.rod,
+            favor: Number.isFinite(validated.rodState.favor) && validated.rodState.favor > 0
+                ? Math.floor(validated.rodState.favor)
+                : 0,
+            windowCastsRemaining: Number.isFinite(validated.rodState.windowCastsRemaining) && validated.rodState.windowCastsRemaining > 0
+                ? Math.floor(validated.rodState.windowCastsRemaining)
+                : 0
+        };
+        validated.rodState.favor = Math.min(validated.rodState.favor, 100);
+        validated.rodState.windowCastsRemaining = Math.min(validated.rodState.windowCastsRemaining, 12);
+
         if (!Array.isArray(validated.achievements)) {
             validated.achievements = [];
         } else {

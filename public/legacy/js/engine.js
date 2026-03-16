@@ -18,6 +18,7 @@
     const NATURAL_WEATHER_DURATION_MS = 20 * 60 * 1000;
     const MAX_INVENTORY_FISH = 5000;
     const AUTO_SELL_RARITIES = new Set(['common', 'uncommon', 'rare', 'epic', 'legendary']);
+    const ROD_LOCKED_RARITIES = new Set(['absolute', 'singularity', 'paradox', 'null']);
 
     class Game {
         constructor() {
@@ -39,6 +40,11 @@
                 caughtSpecies: {},
                 // Pity timer: consecutive catches without rare+ fish
                 pityCounter: 0,
+                rodState: {
+                    rodId: 'bamboo',
+                    favor: 0,
+                    windowCastsRemaining: 0
+                },
                 // Shop: Purchased weathers running simultaneously (max WEATHER_BUY_LIMIT)
                 activeWeathers: [],
                 // Purchased weather expiration times: { weatherKey: unixMs }
@@ -166,6 +172,7 @@
 
         init() {
             this.saveSystem.load();
+            this._ensureRodState(RODS.find((rod) => rod.id === this.state.rod) || RODS[0]);
             this._ensureBaitBenchState();
             this._syncUnlockedBaitBenchRecipes({ logUnlocks: false });
             this._applySettingsDefaults();
@@ -199,6 +206,249 @@
                 this.startAutoFishCycle();
             } else {
                 this.setFishingMode('idle');
+            }
+        }
+
+        _createDefaultRodState(rodId = 'bamboo') {
+            return {
+                rodId,
+                favor: 0,
+                windowCastsRemaining: 0
+            };
+        }
+
+        _getCurrentRod() {
+            return RODS.find((rod) => rod.id === this.state.rod) || RODS[0];
+        }
+
+        _getSpecialRodPassive(rod = null) {
+            const passive = (rod || this._getCurrentRod())?.passive;
+            if (!passive || typeof passive !== 'object') return null;
+            return passive.mode === 'volatile' || passive.mode === 'measured'
+                ? passive
+                : null;
+        }
+
+        _ensureRodState(rod = null) {
+            const currentRod = rod || this._getCurrentRod();
+            const existing = (this.state && typeof this.state.rodState === 'object' && this.state.rodState !== null && !Array.isArray(this.state.rodState))
+                ? this.state.rodState
+                : null;
+
+            if (!existing || existing.rodId !== currentRod.id) {
+                this.state.rodState = this._createDefaultRodState(currentRod.id);
+            } else {
+                this.state.rodState.rodId = currentRod.id;
+                this.state.rodState.favor = Number.isFinite(existing.favor) && existing.favor > 0
+                    ? Math.floor(existing.favor)
+                    : 0;
+                this.state.rodState.windowCastsRemaining = Number.isFinite(existing.windowCastsRemaining) && existing.windowCastsRemaining > 0
+                    ? Math.floor(existing.windowCastsRemaining)
+                    : 0;
+            }
+
+            return this.state.rodState;
+        }
+
+        onRodEquipped(rod, options = {}) {
+            const currentRod = rod || this._getCurrentRod();
+            this.state.rod = currentRod.id;
+            this.state.rodState = this._createDefaultRodState(currentRod.id);
+
+            if (options.silent !== true && this.ui && typeof this.ui.renderStats === 'function') {
+                this.ui.renderStats();
+            }
+
+            return this.state.rodState;
+        }
+
+        _buildRodCastEffect(passive, source = 'volatile') {
+            return {
+                source,
+                label: passive.effectLabel || 'Lucky Window',
+                color: passive.effectColor || '#f59e0b',
+                accessRarities: Array.isArray(passive.accessRarities) ? [...passive.accessRarities] : [],
+                modifiers: {
+                    rarityBias: passive.effectRarityBias && typeof passive.effectRarityBias === 'object'
+                        ? { ...passive.effectRarityBias }
+                        : {}
+                },
+                salvageChance: Number(passive.salvageChance),
+                salvageRarities: Array.isArray(passive.salvageRarities) ? [...passive.salvageRarities] : [],
+                salvageWeightMultiplier: Number(passive.salvageWeightMultiplier),
+                salvageValueMultiplier: Number(passive.salvageValueMultiplier),
+                failureSaveChance: Number(passive.failureSaveChance),
+                failureDowngradeChance: Number(passive.failureDowngradeChance),
+                failureDowngradeRarities: Array.isArray(passive.failureDowngradeRarities)
+                    ? [...passive.failureDowngradeRarities]
+                    : [],
+                targetWidthMultiplier: Number(passive.targetWidthMultiplier)
+            };
+        }
+
+        _announceRodCastEffect(context, effect) {
+            if (!effect || context.mode === 'offline') return;
+            this.log(`${context.rod.name}: ${effect.label} active.`);
+            this.ui.floatTextStyled(effect.label.toUpperCase(), effect.color);
+        }
+
+        _prepareRodCastEffect(context, rng = Math.random) {
+            const passive = this._getSpecialRodPassive(context.rod);
+            if (!passive) return null;
+
+            const rodState = this._ensureRodState(context.rod);
+            if (passive.mode === 'measured') {
+                if (rodState.windowCastsRemaining <= 0) return null;
+                rodState.windowCastsRemaining = Math.max(0, rodState.windowCastsRemaining - 1);
+                if (context.mode !== 'offline' && this.ui && typeof this.ui.renderStats === 'function') {
+                    this.ui.renderStats();
+                }
+                return this._buildRodCastEffect(passive, 'measured');
+            }
+
+            const triggerChance = Number(passive.triggerChance);
+            if (!Number.isFinite(triggerChance) || triggerChance <= 0) return null;
+            if (rng() >= Math.min(0.95, triggerChance)) return null;
+
+            const effect = this._buildRodCastEffect(passive, 'volatile');
+            this._announceRodCastEffect(context, effect);
+            return effect;
+        }
+
+        _getPreviousAvailableRarity(location, rarityKey) {
+            const ordered = this._getLocationRarityOrder(location);
+            const currentIndex = ordered.indexOf(rarityKey);
+            if (currentIndex <= 0) return null;
+            return ordered[currentIndex - 1] || null;
+        }
+
+        _clipFishForRodRescue(fish, rod, effect, valueMultiplier = 1) {
+            const safeCap = Math.max(0.1, this._getEffectiveCapacity(rod, fish));
+            const weightMultiplier = Number.isFinite(effect?.salvageWeightMultiplier) && effect.salvageWeightMultiplier > 0
+                ? effect.salvageWeightMultiplier
+                : 0.95;
+            const rescued = {
+                ...fish,
+                weight: parseFloat(Math.min(fish.weight, Math.max(0.1, safeCap * weightMultiplier)).toFixed(2))
+            };
+
+            const safeValueMultiplier = Number.isFinite(valueMultiplier) && valueMultiplier > 0 ? valueMultiplier : 1;
+            rescued.value = Math.max(1, Math.floor(fish.value * safeValueMultiplier));
+            rescued._rodRescuedBy = effect?.label || 'Lucky Window';
+            return rescued;
+        }
+
+        _maybeRescueOverweightFish(fish, rod) {
+            const effect = fish?._rodCastEffect;
+            if (!effect) return null;
+
+            const salvageRarities = Array.isArray(effect.salvageRarities) && effect.salvageRarities.length > 0
+                ? effect.salvageRarities
+                : effect.accessRarities;
+            if (!Array.isArray(salvageRarities) || !salvageRarities.includes(fish.rarity)) return null;
+
+            const salvageChance = Number(effect.salvageChance);
+            if (!Number.isFinite(salvageChance) || salvageChance <= 0) return null;
+            if (Math.random() >= Math.min(0.95, salvageChance)) return null;
+
+            const rescued = this._clipFishForRodRescue(fish, rod, effect, effect.salvageValueMultiplier);
+            rescued._rodRescueMode = 'salvaged';
+            return rescued;
+        }
+
+        _maybeRescueFailedCatch(fish, rod) {
+            const effect = fish?._rodCastEffect;
+            if (!effect) return null;
+
+            const failureRarities = Array.isArray(effect.failureDowngradeRarities)
+                ? effect.failureDowngradeRarities
+                : [];
+            if (!failureRarities.includes(fish.rarity)) return null;
+
+            const saveChance = Math.max(0, Number(effect.failureSaveChance) || 0);
+            const downgradeChance = Math.max(0, Number(effect.failureDowngradeChance) || 0);
+            const roll = Math.random();
+
+            if (roll < Math.min(0.95, saveChance)) {
+                const rescued = this._clipFishForRodRescue(fish, rod, effect, effect.salvageValueMultiplier || 0.92);
+                rescued._rodRescueMode = 'held';
+                return rescued;
+            }
+
+            if (roll >= Math.min(0.99, saveChance + downgradeChance)) return null;
+
+            const downgradedRarity = this._getPreviousAvailableRarity(this.state.location, fish.rarity);
+            if (!downgradedRarity) return null;
+
+            const rescued = this._clipFishForRodRescue(fish, rod, effect, 1);
+            const currentMeta = this._getRarityMeta(fish.rarity);
+            const downgradedMeta = this._getRarityMeta(downgradedRarity);
+            const currentMult = Number.isFinite(currentMeta.mult) && currentMeta.mult > 0 ? currentMeta.mult : 1;
+            const downgradedMult = Number.isFinite(downgradedMeta.mult) && downgradedMeta.mult > 0 ? downgradedMeta.mult : 1;
+            const payoutScale = Number.isFinite(effect.salvageValueMultiplier) && effect.salvageValueMultiplier > 0
+                ? effect.salvageValueMultiplier
+                : 0.9;
+
+            rescued.rarity = downgradedRarity;
+            rescued.value = Math.max(1, Math.floor(fish.value * (downgradedMult / currentMult) * payoutScale));
+            rescued._rodRescueMode = 'downgraded';
+            rescued._rodRescueRarity = downgradedRarity;
+            return rescued;
+        }
+
+        _recordMeasuredRodOutcome(outcome, fish = null, mode = 'manual') {
+            const rod = this._getCurrentRod();
+            const passive = this._getSpecialRodPassive(rod);
+            if (!passive || passive.mode !== 'measured') return;
+
+            const rodState = this._ensureRodState(rod);
+            if (rodState.windowCastsRemaining > 0) {
+                if (mode !== 'offline' && this.ui && typeof this.ui.renderStats === 'function') {
+                    this.ui.renderStats();
+                }
+                return;
+            }
+
+            let gain = 0;
+            if (outcome === 'empty') {
+                gain = Number(passive.favorOnEmpty);
+            } else if (outcome === 'escape') {
+                gain = Number(passive.favorOnEscape);
+            } else if (outcome === 'catch' && fish) {
+                const rarityOrder = Object.keys(RARITY);
+                const maxIndex = Math.max(0, rarityOrder.indexOf(passive.lowCatchMaxRarity || 'epic'));
+                const fishIndex = rarityOrder.indexOf(fish.rarity);
+                if (fishIndex >= 0 && fishIndex <= maxIndex) {
+                    gain = Number(passive.favorOnLowCatch);
+                }
+            }
+
+            if (!Number.isFinite(gain) || gain <= 0) {
+                if (mode !== 'offline' && this.ui && typeof this.ui.renderStats === 'function') {
+                    this.ui.renderStats();
+                }
+                return;
+            }
+
+            const favorGoal = Number.isFinite(passive.favorGoal) && passive.favorGoal > 0
+                ? Math.floor(passive.favorGoal)
+                : 10;
+            rodState.favor = Math.min(favorGoal, rodState.favor + Math.floor(gain));
+
+            if (rodState.favor >= favorGoal) {
+                rodState.favor = 0;
+                rodState.windowCastsRemaining = Number.isFinite(passive.windowCasts) && passive.windowCasts > 0
+                    ? Math.floor(passive.windowCasts)
+                    : 3;
+
+                if (mode !== 'offline') {
+                    this.log(`${rod.name}: ${passive.effectLabel || 'Lucky Window'} is live for ${rodState.windowCastsRemaining} casts.`);
+                    this.ui.floatTextStyled((passive.effectLabel || 'Lucky Window').toUpperCase(), passive.effectColor || '#14b8a6');
+                }
+            }
+
+            if (mode !== 'offline' && this.ui && typeof this.ui.renderStats === 'function') {
+                this.ui.renderStats();
             }
         }
 
@@ -1922,12 +2172,20 @@
             const craftedModifiers = this._resolveCraftedFamilyModifiers(craftedUse?.family);
             context.activeCraftedBaitFamily = craftedUse?.family || null;
             context.passiveModifiers = this._mergePassiveModifiers(context.passiveModifiers, craftedModifiers);
+            context.rodCastEffect = this._prepareRodCastEffect(context, rng);
+            if (context.rodCastEffect) {
+                context.passiveModifiers = this._mergePassiveModifiers(
+                    context.passiveModifiers,
+                    context.rodCastEffect.modifiers
+                );
+            }
 
             const rarityKey = this.rollRarity(
                 context.location,
                 context.luckMultiplier,
                 rng,
-                context.passiveModifiers?.rarityBias || {}
+                context.passiveModifiers?.rarityBias || {},
+                context.rodCastEffect?.accessRarities || []
             );
             const fishTemplate = this.pickFish(context.location, rarityKey, rng);
 
@@ -1959,7 +2217,8 @@
                     value: finalValue,
                     location: locationName,
                     buff: appliedBuff,
-                    _rngLuckMultiplier: context.luckMultiplier
+                    _rngLuckMultiplier: context.luckMultiplier,
+                    _rodCastEffect: context.rodCastEffect || null
                 }
             };
         }
@@ -1982,6 +2241,7 @@
             const roll = this._rollCatchCandidate('manual');
             if (!roll.fish) {
                 this.log('Nothing bit...');
+                this._recordMeasuredRodOutcome('empty', null, 'manual');
                 document.getElementById('action-btn').textContent = 'Cast Line';
                 this.setFishingMode('idle');
                 return false;
@@ -1992,8 +2252,11 @@
             return true;
         }
 
-        rollRarity(location, luckMultiplier = 1, rng = Math.random, rarityBias = {}) {
-            const ordered = this._getLocationRarityOrder(location);
+        rollRarity(location, luckMultiplier = 1, rng = Math.random, rarityBias = {}, accessRarities = []) {
+            const allowedLockedRarities = new Set(Array.isArray(accessRarities) ? accessRarities : []);
+            const ordered = this._getLocationRarityOrder(location).filter((rarityKey) => {
+                return !ROD_LOCKED_RARITIES.has(rarityKey) || allowedLockedRarities.has(rarityKey);
+            });
             if (!Array.isArray(ordered) || ordered.length === 0) return 'common';
 
             const fallback = ordered.includes('common') ? 'common' : ordered[0];
@@ -2056,7 +2319,11 @@
             // Setup Logic
             this.minigame.pos = 0;
             this.minigame.direction = 1;
-            this.minigame.targetWidth = Math.max(10, 30 * diff);
+            const targetWidthMultiplier = Number(fishData?._rodCastEffect?.targetWidthMultiplier);
+            const safeTargetWidthMultiplier = Number.isFinite(targetWidthMultiplier) && targetWidthMultiplier > 0
+                ? targetWidthMultiplier
+                : 1;
+            this.minigame.targetWidth = Math.max(10, (30 * diff) * safeTargetWidthMultiplier);
             this.minigame.targetStart = Math.random() * (90 - this.minigame.targetWidth) + 5;
 
             // Base speed scales by rarity metadata.
@@ -2093,27 +2360,36 @@
         resolveMinigame() {
             if (!this.minigame.active) return;
 
-            const fish = this.minigame.fishOnLine;
+            let fish = this.minigame.fishOnLine;
             const rod = RODS.find(r => r.id === this.state.rod);
             const effectiveCapacity = this._getEffectiveCapacity(rod, fish);
 
-            // Pre-check: Fish too heavy for rod? It ALWAYS escapes - never catchable
+            // Special rods occasionally keep an impossible fish live, but never on a guarantee.
             if (fish.weight > effectiveCapacity) {
-                this.minigame.active = false;
-                this._stopGameplayLoop();
-                this.ui.showMinigame(false);
-                document.getElementById('action-btn').classList.remove('reeling');
+                const rescuedFish = this._maybeRescueOverweightFish(fish, rod);
+                if (rescuedFish) {
+                    fish = rescuedFish;
+                    this.minigame.fishOnLine = rescuedFish;
+                    this.log(`${rod.name}: ${rescuedFish._rodRescuedBy} held ${rescuedFish.name} in line.`);
+                    this.ui.floatTextStyled((rescuedFish._rodRescuedBy || 'Held').toUpperCase(), fish?._rodCastEffect?.color || '#f59e0b');
+                } else {
+                    this.minigame.active = false;
+                    this._stopGameplayLoop();
+                    this.ui.showMinigame(false);
+                    document.getElementById('action-btn').classList.remove('reeling');
 
-                const capacityText = effectiveCapacity < rod.capacity
-                    ? `${effectiveCapacity.toFixed(1)}kg effective`
-                    : `${rod.capacity}kg max`;
-                this.log(`Released: ${fish.name} (${fish.weight}kg) was too heavy for your ${rod.name} (${capacityText}).`);
-                this.ui.updateStatus(`${fish.name} broke free. Too heavy.`, "danger");
-                this.ui.floatText("TOO HEAVY!");
-                this.achievementManager.onWeightFail(fish);
-                this.breakCombo();
-                this.setFishingMode('idle');
-                return;
+                    const capacityText = effectiveCapacity < rod.capacity
+                        ? `${effectiveCapacity.toFixed(1)}kg effective`
+                        : `${rod.capacity}kg max`;
+                    this.log(`Released: ${fish.name} (${fish.weight}kg) was too heavy for your ${rod.name} (${capacityText}).`);
+                    this.ui.updateStatus(`${fish.name} broke free. Too heavy.`, "danger");
+                    this.ui.floatText("TOO HEAVY!");
+                    this.achievementManager.onWeightFail(fish);
+                    this._recordMeasuredRodOutcome('escape', fish, 'manual');
+                    this.breakCombo();
+                    this.setFishingMode('idle');
+                    return;
+                }
             }
 
             const hit = this.minigame.pos >= this.minigame.targetStart &&
@@ -2187,6 +2463,7 @@
             if (storeOutcome.action === 'rejected') statusMsg += ` Inventory full (${MAX_INVENTORY_FISH}).`;
             this.ui.updateStatus(statusMsg, 'success');
             this.ui.updateLastCatch(fish);
+            this._recordMeasuredRodOutcome('catch', fish, 'manual');
             this.ui.renderStats();
             if (speciesDiscovery.isNew) {
                 this.log(`New species discovered: ${speciesDiscovery.name}.`);
@@ -2204,6 +2481,23 @@
         }
 
         catchFail(fish) {
+            const rod = RODS.find((entry) => entry.id === this.state.rod) || RODS[0];
+            const rescuedFish = this._maybeRescueFailedCatch(fish, rod);
+            if (rescuedFish) {
+                const rescueRarity = rescuedFish._rodRescueMode === 'downgraded'
+                    ? this._getRarityMeta(rescuedFish.rarity).name
+                    : this._getRarityMeta(fish.rarity).name;
+                const rescueMsg = rescuedFish._rodRescueMode === 'downgraded'
+                    ? `${rescuedFish._rodRescuedBy} softened the line. ${fish.name} slips in as ${rescueRarity}.`
+                    : `${rescuedFish._rodRescuedBy} held the line. ${fish.name} stays with you.`;
+                this.log(rescueMsg);
+                this.ui.updateStatus(rescueMsg, 'success');
+                this.ui.floatTextStyled((rescuedFish._rodRescuedBy || 'Held').toUpperCase(), fish?._rodCastEffect?.color || '#f59e0b');
+                this._catchAuthorized = true;
+                this.catchSuccess(rescuedFish);
+                return;
+            }
+
             // Near-miss feedback with rotating dynamic messages.
             const rarityMeta = this._getRarityMeta(fish.rarity);
             const rarityName = rarityMeta.name;
@@ -2220,6 +2514,7 @@
 
             this.log(msg);
             this.ui.updateStatus(msg, statusType);
+            this._recordMeasuredRodOutcome('escape', fish, 'manual');
             this.breakCombo();
             this.setFishingMode('idle');
         }
@@ -2493,6 +2788,7 @@
             if (!fish) {
                 this.log('Nothing bit. Retrying auto-fish cycle.');
                 this.ui.updateStatus('Nothing bit. Casting again.');
+                this._recordMeasuredRodOutcome('empty', null, 'auto');
                 this.startAutoFishCycle();
                 return;
             }
@@ -2531,72 +2827,85 @@
         autoResolve() {
             if (!this.autoFish.enabled) return;
 
-            const fish = this.minigame.fishOnLine;
+            let fish = this.minigame.fishOnLine;
             const rod = RODS.find(r => r.id === this.state.rod) || RODS[0];
             const effectiveCapacity = this._getEffectiveCapacity(rod, fish);
 
-            // Capacity Check - Fish too heavy ALWAYS escapes (same as manual mode)
+            // Capacity check: special rods sometimes salvage an impossible load, but never on a certainty.
             if (fish.weight > effectiveCapacity) {
-                const capacityText = effectiveCapacity < rod.capacity
-                    ? `${effectiveCapacity.toFixed(1)}kg effective`
-                    : `${rod.capacity}kg max`;
-                this.log(`Released: ${fish.name} (${fish.weight}kg) was too heavy for ${rod.name} (${capacityText}).`);
-                this.ui.updateStatus(`${fish.name} broke free. Too heavy.`, 'danger');
-                this.achievementManager.onWeightFail(fish);
-                this.breakCombo();
-            } else {
-                // Apply combo-scaled value, then variant/critical rolls.
-                const comboBefore = this.state.combo;
-
-                // Auto-fishing has a 10x combo limit for balance
-                if (this.state.combo < 10) {
-                    this.incrementCombo();
+                const rescuedFish = this._maybeRescueOverweightFish(fish, rod);
+                if (!rescuedFish) {
+                    const capacityText = effectiveCapacity < rod.capacity
+                        ? `${effectiveCapacity.toFixed(1)}kg effective`
+                        : `${rod.capacity}kg max`;
+                    this.log(`Released: ${fish.name} (${fish.weight}kg) was too heavy for ${rod.name} (${capacityText}).`);
+                    this.ui.updateStatus(`${fish.name} broke free. Too heavy.`, 'danger');
+                    this.achievementManager.onWeightFail(fish);
+                    this._recordMeasuredRodOutcome('escape', fish, 'auto');
+                    this.breakCombo();
+                    this.minigame.fishOnLine = null;
+                    this.autoFish.phase = 'idle';
+                    this.startAutoFishCycle();
+                    return;
                 }
-                const comboAfter = this.state.combo;
 
-                const luckMultiplier = Number(fish._rngLuckMultiplier) > 0
-                    ? fish._rngLuckMultiplier
-                    : this._buildRngContext('auto').luckMultiplier;
-                const { isCrit } = this._applyCatchValueModifiers(fish, {
-                    comboBefore,
-                    comboAfter,
-                    luckMultiplier,
-                    showFx: true
-                });
-
-                // Add to Inventory with unique ID
-                const storeOutcome = this._storeCaughtFish(fish, 'auto');
-                const speciesDiscovery = this.recordCaughtSpecies(fish);
-                this._unlockBaitBenchRecipeBySpecies(speciesDiscovery.name, { logUnlock: speciesDiscovery.isNew });
-                this.state.totalCatches++;
-                this.inventory.render();
-                this._consumeAmulet();
-                const xpGained = this._getRarityMeta(fish.rarity).xp;
-                this.gainXp(xpGained);
-                this._recordFishingResults('auto', { stored: storeOutcome.stored, xpGained });
-
-                let logMsg = `Auto caught ${fish.name} (${fish.weight}kg)`;
-                if (fish.variant) logMsg = `Auto ${fish.variant.icon} ${fish.name} [${fish.variant.label}]`;
-                if (isCrit) logMsg += ` ${this._lastCriticalStatus?.text || 'CRITICAL!'}`;
-                logMsg += ` | +${fish.value} coins value`;
-                this.log(logMsg);
-
-                let statusMsg = `Auto caught ${fish.name}.`;
-                if (fish.variant) statusMsg = `Auto ${fish.variant.icon} ${fish.variant.label} ${fish.name}.`;
-                if (isCrit) statusMsg += ` ${this._lastCriticalStatus?.text || 'CRITICAL!'}`;
-                if (storeOutcome.action === 'sold') statusMsg += ' Inventory full: catch auto-sold.';
-                if (storeOutcome.action === 'rejected') statusMsg += ` Inventory full (${MAX_INVENTORY_FISH}).`;
-                this.ui.updateStatus(statusMsg, 'success');
-                this.ui.updateLastCatch(fish);
-                this.ui.renderStats();
-                if (speciesDiscovery.isNew) {
-                    this.log(`New species discovered: ${speciesDiscovery.name}.`);
-                    this.ui.renderSpeciesTracker();
-                }
-                this._checkMilestone();
-                this.achievementManager.onCatch(fish);
-                this.saveSystem.save();
+                fish = rescuedFish;
+                this.minigame.fishOnLine = rescuedFish;
+                this.log(`${rod.name}: ${rescuedFish._rodRescuedBy} held ${rescuedFish.name} in line.`);
             }
+
+            // Apply combo-scaled value, then variant/critical rolls.
+            const comboBefore = this.state.combo;
+
+            // Auto-fishing has a 10x combo limit for balance
+            if (this.state.combo < 10) {
+                this.incrementCombo();
+            }
+            const comboAfter = this.state.combo;
+
+            const luckMultiplier = Number(fish._rngLuckMultiplier) > 0
+                ? fish._rngLuckMultiplier
+                : this._buildRngContext('auto').luckMultiplier;
+            const { isCrit } = this._applyCatchValueModifiers(fish, {
+                comboBefore,
+                comboAfter,
+                luckMultiplier,
+                showFx: true
+            });
+
+            // Add to Inventory with unique ID
+            const storeOutcome = this._storeCaughtFish(fish, 'auto');
+            const speciesDiscovery = this.recordCaughtSpecies(fish);
+            this._unlockBaitBenchRecipeBySpecies(speciesDiscovery.name, { logUnlock: speciesDiscovery.isNew });
+            this.state.totalCatches++;
+            this.inventory.render();
+            this._consumeAmulet();
+            const xpGained = this._getRarityMeta(fish.rarity).xp;
+            this.gainXp(xpGained);
+            this._recordFishingResults('auto', { stored: storeOutcome.stored, xpGained });
+
+            let logMsg = `Auto caught ${fish.name} (${fish.weight}kg)`;
+            if (fish.variant) logMsg = `Auto ${fish.variant.icon} ${fish.name} [${fish.variant.label}]`;
+            if (isCrit) logMsg += ` ${this._lastCriticalStatus?.text || 'CRITICAL!'}`;
+            logMsg += ` | +${fish.value} coins value`;
+            this.log(logMsg);
+
+            let statusMsg = `Auto caught ${fish.name}.`;
+            if (fish.variant) statusMsg = `Auto ${fish.variant.icon} ${fish.variant.label} ${fish.name}.`;
+            if (isCrit) statusMsg += ` ${this._lastCriticalStatus?.text || 'CRITICAL!'}`;
+            if (storeOutcome.action === 'sold') statusMsg += ' Inventory full: catch auto-sold.';
+            if (storeOutcome.action === 'rejected') statusMsg += ` Inventory full (${MAX_INVENTORY_FISH}).`;
+            this.ui.updateStatus(statusMsg, 'success');
+            this.ui.updateLastCatch(fish);
+            this._recordMeasuredRodOutcome('catch', fish, 'auto');
+            this.ui.renderStats();
+            if (speciesDiscovery.isNew) {
+                this.log(`New species discovered: ${speciesDiscovery.name}.`);
+                this.ui.renderSpeciesTracker();
+            }
+            this._checkMilestone();
+            this.achievementManager.onCatch(fish);
+            this.saveSystem.save();
 
             this.minigame.fishOnLine = null;
 
@@ -2642,17 +2951,24 @@
 
             for (let i = 0; i < maxCycles; i++) {
                 const roll = this._rollCatchCandidate('offline');
-                const fish = roll.fish;
+                let fish = roll.fish;
 
                 if (!fish) {
+                    this._recordMeasuredRodOutcome('empty', null, 'offline');
                     combo = 0;
                     continue;
                 }
 
-                // Capacity check ï¿½ fish too heavy escapes
+                // Capacity check ï¿½ special rods can sometimes rescue an impossible catch.
                 if (fish.weight > this._getEffectiveCapacity(rod, fish)) {
-                    combo = 0;
-                    continue;
+                    const rescuedFish = this._maybeRescueOverweightFish(fish, rod);
+                    if (rescuedFish) {
+                        fish = rescuedFish;
+                    } else {
+                        this._recordMeasuredRodOutcome('escape', fish, 'offline');
+                        combo = 0;
+                        continue;
+                    }
                 }
 
                 // Successful catch
@@ -2664,6 +2980,7 @@
                     luckMultiplier: roll.context.luckMultiplier,
                     showFx: false
                 });
+                this._recordMeasuredRodOutcome('catch', fish, 'offline');
 
                 // Offline fish go directly to coins (not inventory) to prevent localStorage bloat
                 // B2 note: Achievement hooks intentionally not fired for offline catches (limited simulation)

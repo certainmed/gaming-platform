@@ -290,11 +290,13 @@ class Shop {
 
         if (this.game.state.rodsOwned.includes(id)) {
             this.game.state.rod = id;
+            if (typeof this.game.onRodEquipped === 'function') this.game.onRodEquipped(item);
             this.game.log(`Equipped ${item.name}.`);
         } else if (this.game.state.coins >= item.cost) {
             this.game.spendCoins(item.cost);
             this.game.state.rodsOwned.push(id);
             this.game.state.rod = id;
+            if (typeof this.game.onRodEquipped === 'function') this.game.onRodEquipped(item);
             this.game.log(`Purchased ${item.name}.`);
             this.game.achievementManager.onPurchase('rod', id);
         } else {
