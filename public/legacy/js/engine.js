@@ -400,11 +400,18 @@
             const rod = this._getCurrentRod();
             const passive = this._getSpecialRodPassive(rod);
             if (!passive || passive.mode !== 'measured') return;
+            const shouldPersistMeterState = mode !== 'offline'
+                && outcome !== 'catch'
+                && this.saveSystem
+                && typeof this.saveSystem.save === 'function';
 
             const rodState = this._ensureRodState(rod);
             if (rodState.windowCastsRemaining > 0) {
                 if (mode !== 'offline' && this.ui && typeof this.ui.renderStats === 'function') {
                     this.ui.renderStats();
+                }
+                if (shouldPersistMeterState) {
+                    this.saveSystem.save();
                 }
                 return;
             }
@@ -426,6 +433,9 @@
             if (!Number.isFinite(gain) || gain <= 0) {
                 if (mode !== 'offline' && this.ui && typeof this.ui.renderStats === 'function') {
                     this.ui.renderStats();
+                }
+                if (shouldPersistMeterState) {
+                    this.saveSystem.save();
                 }
                 return;
             }
@@ -449,6 +459,9 @@
 
             if (mode !== 'offline' && this.ui && typeof this.ui.renderStats === 'function') {
                 this.ui.renderStats();
+            }
+            if (shouldPersistMeterState) {
+                this.saveSystem.save();
             }
         }
 
@@ -2363,6 +2376,18 @@
             let fish = this.minigame.fishOnLine;
             const rod = RODS.find(r => r.id === this.state.rod);
             const effectiveCapacity = this._getEffectiveCapacity(rod, fish);
+            const hit = this.minigame.pos >= this.minigame.targetStart &&
+                this.minigame.pos <= (this.minigame.targetStart + this.minigame.targetWidth);
+
+            this.minigame.active = false;
+            this._stopGameplayLoop();
+            this.ui.showMinigame(false);
+            document.getElementById('action-btn').classList.remove('reeling');
+
+            if (!hit) {
+                this.catchFail(fish);
+                return;
+            }
 
             // Special rods occasionally keep an impossible fish live, but never on a guarantee.
             if (fish.weight > effectiveCapacity) {
@@ -2373,11 +2398,6 @@
                     this.log(`${rod.name}: ${rescuedFish._rodRescuedBy} held ${rescuedFish.name} in line.`);
                     this.ui.floatTextStyled((rescuedFish._rodRescuedBy || 'Held').toUpperCase(), fish?._rodCastEffect?.color || '#f59e0b');
                 } else {
-                    this.minigame.active = false;
-                    this._stopGameplayLoop();
-                    this.ui.showMinigame(false);
-                    document.getElementById('action-btn').classList.remove('reeling');
-
                     const capacityText = effectiveCapacity < rod.capacity
                         ? `${effectiveCapacity.toFixed(1)}kg effective`
                         : `${rod.capacity}kg max`;
@@ -2392,20 +2412,8 @@
                 }
             }
 
-            const hit = this.minigame.pos >= this.minigame.targetStart &&
-                this.minigame.pos <= (this.minigame.targetStart + this.minigame.targetWidth);
-
-            this.minigame.active = false;
-            this._stopGameplayLoop();
-            this.ui.showMinigame(false);
-            document.getElementById('action-btn').classList.remove('reeling');
-
-            if (hit) {
-                this._catchAuthorized = true; // Vuln #2: authorize catch before calling
-                this.catchSuccess(fish);
-            } else {
-                this.catchFail(fish);
-            }
+            this._catchAuthorized = true; // Vuln #2: authorize catch before calling
+            this.catchSuccess(fish);
         }
 
         /* --- MECHANICS: RESOLUTION --- */

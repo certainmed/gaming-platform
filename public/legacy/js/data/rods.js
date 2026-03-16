@@ -100,7 +100,7 @@ const RODS = [
             effectLabel: 'Fine Seam',
             effectColor: '#22c55e',
             triggerChance: 0.05,
-            accessRarities: ['singularity'],
+            accessRarities: ['singularity', 'absolute'],
             effectRarityBias: {
                 singularity: 1450,
                 absolute: 1.28,
@@ -125,7 +125,7 @@ const RODS = [
             effectLabel: 'Crossweave',
             effectColor: '#fb7185',
             triggerChance: 0.045,
-            accessRarities: ['paradox'],
+            accessRarities: ['paradox', 'singularity', 'absolute'],
             effectRarityBias: {
                 paradox: 1850,
                 singularity: 1.32,
@@ -151,7 +151,7 @@ const RODS = [
             effectLabel: 'Still Water',
             effectColor: '#e2e8f0',
             triggerChance: 0.04,
-            accessRarities: ['null'],
+            accessRarities: ['null', 'paradox', 'singularity'],
             effectRarityBias: {
                 null: 2600,
                 paradox: 1.36,
