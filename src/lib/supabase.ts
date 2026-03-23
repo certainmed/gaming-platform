@@ -10,8 +10,9 @@ export function getSupabaseConfig() {
 }
 
 export function createServerSupabaseClient() {
-  const { url, anonKey } = getSupabaseConfig();
-  return createClient(url, anonKey, {
+  const { url } = getSupabaseConfig();
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_FUNCTIONS_KEY || "";
+  return createClient(url, serviceKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
