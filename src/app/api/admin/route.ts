@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
     const q = req.nextUrl.searchParams.get("q") || "";
     let query = supabase
       .from("user_profiles")
-      .select("user_id, username, avatar_url, bio, is_admin, created_at, last_seen_at, onboarding_completed")
+      .select("user_id, username, avatar_url, bio, is_admin, created_at, last_seen_at")
       .order("created_at", { ascending: false })
       .limit(50);
 

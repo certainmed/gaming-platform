@@ -5,7 +5,7 @@ import Link from "next/link";
 import { getClientSupabase } from "@/lib/auth-client";
 import styles from "@/app/admin/admin.module.css";
 
-type AdminUser = { user_id: string; username: string; is_admin: boolean; created_at: string; onboarding_completed: boolean };
+type AdminUser = { user_id: string; username: string; is_admin: boolean; created_at: string };
 type AdminLog = { id: string; admin_id: string; action: string; target_user_id: string; details: Record<string, unknown>; created_at: string; admin_username?: string | null };
 type Setting = { key: string; value: Record<string, unknown>; updated_at: string };
 
@@ -149,14 +149,13 @@ export default function AdminClient() {
           </div>
           <div className={styles.tableWrap}>
             <table className={styles.table}>
-              <thead><tr><th>Username</th><th>Admin</th><th>Joined</th><th>Onboarded</th><th>User ID</th></tr></thead>
+              <thead><tr><th>Username</th><th>Admin</th><th>Joined</th><th>User ID</th></tr></thead>
               <tbody>
                 {users.map((u) => (
                   <tr key={u.user_id}>
                     <td><Link href={`/profile/${u.username}`}>@{u.username}</Link></td>
                     <td>{u.is_admin ? "Yes" : "No"}</td>
                     <td>{new Date(u.created_at).toLocaleDateString()}</td>
-                    <td>{u.onboarding_completed ? "Yes" : "No"}</td>
                     <td className={styles.mono}>{u.user_id.slice(0, 8)}...</td>
                   </tr>
                 ))}

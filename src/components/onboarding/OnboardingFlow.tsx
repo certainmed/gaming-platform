@@ -43,12 +43,19 @@ export default function OnboardingFlow() {
   const [closing, setClosing] = useState(false);
 
   useEffect(() => {
+    const DISMISSED_KEY = "onboarding_dismissed";
+    if (localStorage.getItem(DISMISSED_KEY) === "true") return;
+
     const check = async () => {
       try {
         const supabase = getClientSupabase();
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.user) return;
         const { data } = await supabase.from("onboarding_progress").select("completed_at, skipped").eq("user_id", session.user.id).maybeSingle();
+        if (data?.completed_at || data?.skipped) {
+          localStorage.setItem(DISMISSED_KEY, "true");
+          return;
+        }
         if (!data) {
           setVisible(true);
           await supabase.from("onboarding_progress").insert({ user_id: session.user.id });
@@ -62,6 +69,7 @@ export default function OnboardingFlow() {
 
   const close = useCallback(async (skipped: boolean) => {
     setClosing(true);
+    localStorage.setItem("onboarding_dismissed", "true");
     try {
       const supabase = getClientSupabase();
       const { data: { session } } = await supabase.auth.getSession();
