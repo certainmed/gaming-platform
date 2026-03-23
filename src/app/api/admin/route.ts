@@ -8,26 +8,26 @@ function forbidden() {
 
 async function verifyAdmin(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
-  if (!authHeader) return null;
+  if (!authHeader) { console.error("[admin] No authorization header"); return null; }
 
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_FUNCTIONS_KEY || "";
-  if (!serviceKey) {
-    console.error("[admin] SUPABASE_SERVICE_ROLE_KEY is not set — admin API cannot function.");
-    return null;
-  }
+  if (!serviceKey) { console.error("[admin] SUPABASE_SERVICE_ROLE_KEY is not set"); return null; }
 
   const anonClient = createServerSupabaseClient();
-  const { data: { user } } = await anonClient.auth.getUser(authHeader.replace("Bearer ", ""));
-  if (!user) return null;
+  const { data: { user }, error: userError } = await anonClient.auth.getUser(authHeader.replace("Bearer ", ""));
+  if (userError) { console.error("[admin] getUser error:", userError.message); return null; }
+  if (!user) { console.error("[admin] No user from token"); return null; }
+  console.log("[admin] User verified:", user.id);
 
   const supabase = createServiceSupabaseClient();
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("user_profiles")
     .select("is_admin")
     .eq("user_id", user.id)
     .single();
 
-  if (!profile?.is_admin) return null;
+  if (profileError) { console.error("[admin] Profile query error:", profileError.message); return null; }
+  if (!profile?.is_admin) { console.error("[admin] User not admin. is_admin =", profile?.is_admin); return null; }
   return { user, supabase };
 }
 
