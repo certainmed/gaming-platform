@@ -26,6 +26,7 @@ async function verifyAdmin(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  try {
   const admin = await verifyAdmin(req);
   if (!admin) return forbidden();
 
@@ -89,9 +90,15 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: true });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown server error";
+    console.error("[admin GET]", message);
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
+  try {
   const ip = getRequestIp(req);
   const rate = consumeRateLimit({ key: `admin:${ip}`, limit: 30, windowMs: 60_000 });
   if (!rate.allowed) {
@@ -230,4 +237,9 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: false, error: "Unknown action." }, { status: 400 });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown server error";
+    console.error("[admin POST]", message);
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
 }

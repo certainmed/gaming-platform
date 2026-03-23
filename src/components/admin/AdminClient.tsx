@@ -76,8 +76,8 @@ export default function AdminClient() {
         if (json.ok) setSettings(json.settings);
         else setTabError(json.error || "Failed to load settings.");
       }
-    } catch {
-      setTabError("Network error. Check your connection.");
+    } catch (err) {
+      setTabError(err instanceof Error ? err.message : "Network error. Check your connection.");
     }
   }, [getToken, searchQ]);
 
