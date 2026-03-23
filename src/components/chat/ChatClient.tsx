@@ -33,8 +33,20 @@ export default function ChatClient() {
       const res = await fetch(`/api/chat/messages?room_id=${GLOBAL_ROOM}&limit=50`);
       const json = await res.json();
       if (json.ok) {
-        setMessages(json.messages);
-        setTimeout(scrollToBottom, 100);
+        setMessages((prev) => {
+          const incoming = json.messages as Message[];
+          if (prev.length === 0) {
+            setTimeout(scrollToBottom, 100);
+            return incoming;
+          }
+          const prevIds = new Set(prev.map((m) => m.id));
+          const hasNew = incoming.some((m: Message) => !prevIds.has(m.id));
+          if (hasNew) {
+            setTimeout(scrollToBottom, 100);
+            return incoming;
+          }
+          return prev;
+        });
       }
     } finally {
       setLoading(false);
@@ -71,7 +83,14 @@ export default function ChatClient() {
     };
 
     const cleanup = init();
-    return () => { void cleanup.then((fn) => fn?.()); };
+
+    // Poll for new messages every 3 seconds as realtime fallback
+    const poll = setInterval(() => { void fetchMessages(); }, 3000);
+
+    return () => {
+      clearInterval(poll);
+      void cleanup.then((fn) => fn?.());
+    };
   }, [fetchMessages]);
 
   const sendMessage = useCallback(async () => {
