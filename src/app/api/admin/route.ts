@@ -41,21 +41,50 @@ export async function GET(req: NextRequest) {
       .limit(50);
 
     if (q) query = query.ilike("username", `%${q}%`);
-    const { data } = await query;
+    const { data, error } = await query;
+    if (error) {
+      return NextResponse.json({ ok: false, error: "Failed to fetch users." }, { status: 500 });
+    }
     return NextResponse.json({ ok: true, users: data || [] });
   }
 
   if (tab === "logs") {
-    const { data } = await supabase
+    const { data: logs, error: logsError } = await supabase
       .from("admin_logs")
-      .select("*, user_profiles!admin_logs_admin_id_fkey(username)")
+      .select("*")
       .order("created_at", { ascending: false })
       .limit(100);
-    return NextResponse.json({ ok: true, logs: data || [] });
+
+    if (logsError) {
+      return NextResponse.json({ ok: false, error: "Failed to fetch logs." }, { status: 500 });
+    }
+
+    // Fetch admin usernames separately (admin_logs FK points to auth.users, not user_profiles)
+    const adminIds = [...new Set((logs || []).map((l: Record<string, unknown>) => l.admin_id).filter(Boolean))] as string[];
+    let usernameMap: Record<string, string> = {};
+    if (adminIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from("user_profiles")
+        .select("user_id, username")
+        .in("user_id", adminIds);
+      if (profiles) {
+        usernameMap = Object.fromEntries(profiles.map((p: { user_id: string; username: string }) => [p.user_id, p.username]));
+      }
+    }
+
+    const enrichedLogs = (logs || []).map((l: Record<string, unknown>) => ({
+      ...l,
+      admin_username: l.admin_id ? usernameMap[l.admin_id as string] || null : null,
+    }));
+
+    return NextResponse.json({ ok: true, logs: enrichedLogs });
   }
 
   if (tab === "settings") {
-    const { data } = await supabase.from("platform_settings").select("*");
+    const { data, error } = await supabase.from("platform_settings").select("*");
+    if (error) {
+      return NextResponse.json({ ok: false, error: "Failed to fetch settings." }, { status: 500 });
+    }
     return NextResponse.json({ ok: true, settings: data || [] });
   }
 
@@ -121,14 +150,36 @@ export async function POST(req: NextRequest) {
   if (action === "set_weather") {
     const condition = String(body.condition || "clear");
     const intensity = Number(body.intensity) || 1;
+    const game = String(body.game || "").toLowerCase();
 
-    await supabase
+    if (game !== "fisher" && game !== "farmer") {
+      return NextResponse.json({ ok: false, error: "game must be 'fisher' or 'farmer'." }, { status: 400 });
+    }
+
+    const settingsKey = `${game}_weather`;
+    const weatherValue = { condition, intensity };
+    const now = new Date().toISOString();
+
+    // Upsert: insert if key doesn't exist, update if it does
+    const { error: existsError } = await supabase
       .from("platform_settings")
-      .update({ value: { condition, intensity }, updated_by: adminUser.id, updated_at: new Date().toISOString() })
-      .eq("key", "global_weather");
+      .select("key")
+      .eq("key", settingsKey)
+      .single();
 
-    await logAction({ condition, intensity });
-    return NextResponse.json({ ok: true, message: `Weather set to ${condition} (${intensity}).` });
+    if (existsError) {
+      await supabase
+        .from("platform_settings")
+        .insert({ key: settingsKey, value: weatherValue, updated_by: adminUser.id, updated_at: now });
+    } else {
+      await supabase
+        .from("platform_settings")
+        .update({ value: weatherValue, updated_by: adminUser.id, updated_at: now })
+        .eq("key", settingsKey);
+    }
+
+    await logAction({ game, condition, intensity });
+    return NextResponse.json({ ok: true, message: `${game} weather set to ${condition} (${intensity}).` });
   }
 
   if (action === "add_money" || action === "remove_money") {

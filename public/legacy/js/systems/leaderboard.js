@@ -1011,9 +1011,9 @@
                 return false;
             }
 
+            // handleLoginSuccess and loadFromCloud are handled by onAuthStateChange
             if (data?.session && data?.user) {
-                await this.handleLoginSuccess(data.user);
-                await this.loadFromCloud({ force: true });
+                this.closeAuthModal();
             }
 
             this._setAuthFeedback('Signup successful. Verify email if required, then login.', 'success');
@@ -1032,6 +1032,11 @@
 
     const originalHandleLoginSuccess = CloudSystem.handleLoginSuccess.bind(CloudSystem);
     CloudSystem.handleLoginSuccess = async function (user) {
+        // Prevent concurrent login processing for the same user (avoids lock contention
+        // when onAuthStateChange and explicit auth paths both call handleLoginSuccess).
+        if (this._loginProcessingUserId === user.id) return;
+        this._loginProcessingUserId = user.id;
+
         originalHandleLoginSuccess(user);
 
         try {
@@ -1040,6 +1045,8 @@
             await this.refreshLeaderboards();
         } catch (err) {
             console.warn('Post-login profile/leaderboard setup failed:', err?.message || err);
+        } finally {
+            this._loginProcessingUserId = null;
         }
     };
 

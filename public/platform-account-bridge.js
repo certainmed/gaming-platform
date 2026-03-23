@@ -84,6 +84,16 @@
 
     function getClient(name) {
         const key = name === 'farmer' ? 'farmer' : 'fisher';
+
+        // When both games share the same Supabase project, reuse a single
+        // client instance to prevent navigator.locks contention.
+        if (key === 'farmer' && usesSharedAuthBackend()) {
+            if (!clients.fisher) {
+                getClient('fisher');
+            }
+            return clients.fisher;
+        }
+
         if (clients[key]) {
             return clients[key];
         }
@@ -531,10 +541,11 @@
     }
 
     window.PlatformAccountBridge = {
-        version: '2026-03-15a',
+        version: '2026-03-24a',
         getSessionState,
         signIn,
         signUp,
-        signOut
+        signOut,
+        getClient
     };
 })();

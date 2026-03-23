@@ -9,7 +9,8 @@
       "Bash(taskkill //F //PID 13804)",
       "Bash(taskkill //F //PID 4140)",
       "Bash(rm -f C:/Users/prezv/Documents/Coding/gaming-platform/.git/index.lock)",
-      "Bash(powershell -Command \"Remove-Item ''C:\\\\Users\\\\prezv\\\\Documents\\\\Coding\\\\gaming-platform\\\\.git\\\\index.lock'' -Force -ErrorAction SilentlyContinue; Write-Host ''done''\")"
+      "Bash(powershell -Command \"Remove-Item ''C:\\\\Users\\\\prezv\\\\Documents\\\\Coding\\\\gaming-platform\\\\.git\\\\index.lock'' -Force -ErrorAction SilentlyContinue; Write-Host ''done''\")",
+      "Bash(npx tsc:*)"
     ]
   }
 }

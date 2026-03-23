@@ -1042,6 +1042,11 @@ async function init() {
             await refreshLeaderboard({ force: true });
         }
 
+        // Start weather polling
+        if (typeof startWeatherPolling === 'function') {
+            startWeatherPolling();
+        }
+
         // Auto-save every 30 seconds
         setInterval(saveGame, 30000);
     } catch (error) {

@@ -56,6 +56,19 @@
 
     function ensureClient() {
         if (client) return client;
+
+        // Reuse the bridge's farmer client when available to prevent lock contention
+        // from multiple Supabase instances sharing the same storage key.
+        const bridge = window.PlatformAccountBridge;
+        if (bridge && typeof bridge.getClient === "function") {
+            try {
+                client = bridge.getClient("farmer");
+                return client;
+            } catch (e) {
+                console.warn("Could not reuse bridge client:", e.message);
+            }
+        }
+
         if (!window.supabase || typeof window.supabase.createClient !== "function") return null;
 
         const config = readConfig();

@@ -7,9 +7,20 @@ const SUPABASE_URL = 'https://clgzhgczlafvuagbwapk.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_YJxmXd0uOHYMyVygm2vL6g_IsM7IVmo';
 const ALERT_FUNCTION_URL = '/api/alerts';
 
-const cloudSupabaseClient = (window.supabase && typeof window.supabase.createClient === 'function')
-    ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
-    : null;
+const cloudSupabaseClient = (() => {
+    // Reuse the bridge's fisher client when available to prevent lock contention
+    // from multiple Supabase instances sharing the same storage key.
+    const bridge = window.PlatformAccountBridge;
+    if (bridge && typeof bridge.getClient === 'function') {
+        try { return bridge.getClient('fisher'); } catch (e) {
+            console.warn('Could not reuse bridge client:', e.message);
+        }
+    }
+    if (window.supabase && typeof window.supabase.createClient === 'function') {
+        return window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    }
+    return null;
+})();
 
 if (!cloudSupabaseClient) {
     console.error('Supabase client library is missing. Check script order in index.html.');
@@ -96,7 +107,7 @@ const CloudSystem = {
             if (hasSessionUser) {
                 const nextUser = session.user;
                 const previousUserId = this.user ? this.user.id : null;
-                this.handleLoginSuccess(nextUser);
+                await this.handleLoginSuccess(nextUser);
                 this.authHydrated = true;
 
                 if (event === 'SIGNED_IN') {
@@ -780,9 +791,8 @@ const CloudSystem = {
                     }
 
                     if (fisherUser) {
-                        this.handleLoginSuccess(fisherUser);
+                        // handleLoginSuccess and loadFromCloud are handled by onAuthStateChange
                         this.closeAuthModal();
-                        await this.loadFromCloud({ force: true });
                     } else {
                         this.authMode = 'login';
                         this._syncAuthModalMode();
@@ -800,9 +810,8 @@ const CloudSystem = {
                         console.warn('Platform account warnings:', bridgeResult.warnings.join(' | '));
                     }
 
-                    this.handleLoginSuccess(fisherUser);
+                    // handleLoginSuccess and loadFromCloud are handled by onAuthStateChange
                     this.closeAuthModal();
-                    await this.loadFromCloud({ force: true });
                 }
                 return false;
             }
@@ -830,10 +839,9 @@ const CloudSystem = {
                     this._setAuthFeedback('Login failed: ' + error.message, 'error');
                     return false;
                 }
+                // handleLoginSuccess and loadFromCloud are handled by onAuthStateChange
                 if (data && data.user) {
-                    this.handleLoginSuccess(data.user);
                     this.closeAuthModal();
-                    await this.loadFromCloud({ force: true });
                 }
             }
         } finally {

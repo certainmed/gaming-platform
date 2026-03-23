@@ -189,6 +189,7 @@
             this.ui.renderAll();
             this._renderSettingsPanel();
             this.startWeatherCycle();
+            this._startServerWeatherPolling();
             this._initVisibilityHandler();
             this._initKeyboardShortcuts();
 
@@ -1272,6 +1273,43 @@
 
             if (logChange) {
                 this.log(`Weather: ${WEATHER_DATA[safeType].name} - ${WEATHER_DATA[safeType].desc}`);
+            }
+        }
+
+        /* --- SERVER WEATHER INTEGRATION --- */
+        _startServerWeatherPolling() {
+            this._serverWeatherLastUpdated = null;
+            this._fetchServerWeather();
+            this._serverWeatherTimer = setInterval(() => this._fetchServerWeather(), 3 * 60 * 1000);
+        }
+
+        async _fetchServerWeather() {
+            try {
+                const res = await fetch('/api/weather?game=fisher');
+                if (!res.ok) return;
+                const json = await res.json();
+                if (!json.ok) return;
+
+                const { weather, updated_at } = json;
+                if (!weather || !weather.condition) return;
+
+                // Skip if we already applied this update
+                if (updated_at && updated_at === this._serverWeatherLastUpdated) return;
+                this._serverWeatherLastUpdated = updated_at;
+
+                const condition = String(weather.condition).toLowerCase();
+                if (condition === 'clear' || condition === 'auto') return;
+
+                // Map admin conditions to WEATHER_DATA keys
+                const key = WEATHER_DATA[condition] ? condition : null;
+                if (!key) return;
+
+                // Apply server weather as current natural weather
+                const duration = NATURAL_WEATHER_DURATION_MS;
+                this.setWeather(key, { expiresAt: Date.now() + duration, logChange: true });
+                this.saveSystem.save();
+            } catch (err) {
+                // Silently ignore fetch errors (offline, etc.)
             }
         }
 
